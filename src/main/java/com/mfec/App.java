@@ -35,15 +35,13 @@ public class App {
         // StreamExecutionEnvironment joinResult = joinStream.joinStreamWindow(env,
         // tableEnv);
         // joinResult.execute("Windowed join example");
-        // StreamExecutionEnvironment temporal = TemporalJoin.temporalJoin(env,
-        // tableEnv);
-        // temporal.execute();
 
         // StreamExecutionEnvironment tableJoin = TableJoin.tableJoin(env, tableEnv);
         // tableJoin.execute();
-        TestJoin.testJoin();
+        // TestJoin.testJoin();
 
         // JoinExample.joinStreamExample(env, tableEnv);
+        TestJoin2.testJoin();
     }
 
     public static StreamExecutionEnvironment dataStreamToTable(StreamExecutionEnvironment env,

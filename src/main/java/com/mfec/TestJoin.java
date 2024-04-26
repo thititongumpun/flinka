@@ -26,59 +26,53 @@ public class TestJoin {
                 .schema(Schema.newBuilder()
                         .column("name", DataTypes.STRING())
                         .column("jobTitle", DataTypes.STRING())
-                        .column("proctime", DataTypes.TIMESTAMP_LTZ(3))
-                        .watermark("proctime", "proctime - INTERVAL '5' SECOND")
+                        .column("pProctime", DataTypes.TIMESTAMP_LTZ(3))
+                        .watermark("pProctime", "pProctime - INTERVAL '5' SECOND")
                         .build())
                 .option("topic", "persons")
-                .option("properties.bootstrap.servers", "devops1:9092")
+                .option("properties.bootstrap.servers", "streaming-dev.xyz:29092")
                 .option("properties.group.id", "person-groupid")
-                .option("scan.startup.mode", "latest-offset")
+                .option("scan.startup.mode", "earliest-offset")
                 .option("value.format", "json")
                 .build());
 
-        tableEnv.createTemporaryTable("personInfo", TableDescriptor.forConnector("kafka")
+        tableEnv.createTemporaryTable("PersonInfo", TableDescriptor.forConnector("kafka")
                 .schema(Schema.newBuilder()
                         .column("name", DataTypes.STRING())
                         .column("accountName", DataTypes.STRING())
                         .column("amount", DataTypes.DOUBLE())
                         .column("transactionType", DataTypes.STRING())
-                        .column("proctime", DataTypes.TIMESTAMP_LTZ(3))
-                        .watermark("proctime", "proctime - INTERVAL '5' SECOND")
+                        .column("piProctime", DataTypes.TIMESTAMP_LTZ(3))
+                        .watermark("piProctime", "piProctime - INTERVAL '5' SECOND")
                         .build())
                 .option("topic", "personsInfo")
-                .option("properties.bootstrap.servers", "devops1:9092")
+                .option("properties.bootstrap.servers", "streaming-dev.xyz:29092")
                 .option("properties.group.id", "personInfo-groupid")
-                .option("scan.startup.mode", "latest-offset")
+                .option("scan.startup.mode", "earliest-offset")
                 .option("value.format", "json")
                 .build());
 
         Table personTable = tableEnv.from("Person")
-                .renameColumns($("name").as("personName"), $("proctime").as("p_proctime"));
-        Table personInfoTable = tableEnv.from("personInfo")
-                .renameColumns($("name").as("personInfoName"), $("proctime").as("pi_proctime"));
+                .renameColumns($("name").as("personName"));
+        Table personInfoTable = tableEnv.from("PersonInfo")
+                .renameColumns($("name").as("personInfoName"));
 
         TemporalTableFunction personTemporal = personTable
                 .createTemporalTableFunction(
-                        $("p_proctime"),
+                        $("pProctime"),
                         $("personName"));
 
         tableEnv.createTemporarySystemFunction("personTemporal", personTemporal);
 
         Table result = personInfoTable
                 .joinLateral(call("personTemporal",
-                        $("pi_proctime")),
+                        $("piProctime")),
                         $("personInfoName").isEqual($("personName")));
 
+        // tableEnv.toDataStream(personTable).print();
+        // tableEnv.toDataStream(personInfoTable).print();
+        // DataStream<Row> outputStream = 
         tableEnv.toChangelogStream(result).print();
-
-        // Table join = personTable.join(personInfoTable)
-        // .where($("personName").isEqual($("personInfoName")));
-        // Table join = personTable.join(personInfoTable)
-        // .where($("personName").isEqual($("personInfoName")))
-        // .groupBy($("personName"))
-        // .select($("personName"), $("amount").sum());
-
-        // DataStream<Row> outputStream = tableEnv.toChangelogStream(join);
         // outputStream.print();
 
         env.execute();

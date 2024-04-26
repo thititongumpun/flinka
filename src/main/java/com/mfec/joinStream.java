@@ -22,6 +22,7 @@ import org.apache.flink.types.Row;
 
 import com.mfec.pojo.Person;
 import com.mfec.pojo.PersonInfo;
+import com.mfec.pojo.PersonInfoOut;
 
 import org.apache.flink.streaming.api.windowing.assigners.TumblingEventTimeWindows;
 
@@ -35,7 +36,7 @@ public class joinStream {
         JsonDeserializationSchema<PersonInfo> personInfoFormat = new JsonDeserializationSchema<>(PersonInfo.class);
 
         KafkaSource<Person> personSource = KafkaSource.<Person>builder()
-                .setBootstrapServers("devops1:9092")
+                .setBootstrapServers("streaming-dev.xyz:29092")
                 .setTopics("persons")
                 .setGroupId("flink-kafka-app32112")
                 .setStartingOffsets(OffsetsInitializer.earliest())
@@ -43,7 +44,7 @@ public class joinStream {
                 .build();
 
         KafkaSource<PersonInfo> personInfoSource = KafkaSource.<PersonInfo>builder()
-                .setBootstrapServers("devops1:9092")
+                .setBootstrapServers("streaming-dev.xyz:29092")
                 .setTopics("personsInfo")
                 .setGroupId("flink-kafka-app32123")
                 .setStartingOffsets(OffsetsInitializer.earliest())
@@ -52,153 +53,87 @@ public class joinStream {
 
         DataStream<Person> dataStream1 = env.fromSource(personSource,
                 WatermarkStrategy.forBoundedOutOfOrderness(Duration.ofSeconds(20)),
+                // IngestionTimeWatermarkStrategy.create(),
                 "Person Source")
                 .setParallelism(1);
 
         DataStream<PersonInfo> dataStream2 = env.fromSource(personInfoSource,
                 WatermarkStrategy.forBoundedOutOfOrderness(Duration.ofSeconds(20)),
+                // IngestionTimeWatermarkStrategy.create(),
                 "PersonInfo Source")
                 .setParallelism(1);
 
-        DataStream<Person> x = dataStream1.join(dataStream2)
-                .where(p -> p.getName())
-                .equalTo(personInfo -> personInfo.getName())
-                .window(TumblingEventTimeWindows.of(Duration.ofSeconds(5)))
-                .apply(new JoinFunction<Person, PersonInfo, Person>() {
+        DataStream<PersonInfoOut> joinOut = dataStream1.join(dataStream2)
+                .where(Person::getName)
+                .equalTo(PersonInfo::getName)
+                .window(TumblingEventTimeWindows.of(Duration.ofSeconds(20)))
+                .apply(new JoinFunction<Person, PersonInfo, PersonInfoOut>() {
                     @Override
-                    public Person join(Person person, PersonInfo personInfo) throws Exception {
-                        return new Person() {
-                            {
-                                setName(getName());
-                                setJobTitle(getJobTitle());
-                            }
-                        };
+                    public PersonInfoOut join(Person person, PersonInfo personInfo) throws Exception {
+                        PersonInfoOut p = new PersonInfoOut();
+                        p.setName(person.getName());
+                        p.setJobTitle(person.getJobTitle());
+                        p.setAccountName(personInfo.getAccountName());
+                        p.setAmount(personInfo.getAmount());
+                        p.setTransactionType(personInfo.getTransactionType());
+                        p.setProctime(person.getPProctime());
+                        return p;
                     }
                 });
-
-        // dataStream1.print();
         // dataStream2.print();
-        // x.print();
+        joinOut.print();
 
-        DataStream<Tuple2<String, String>> dataStreamMap1 = dataStream1
-                .map(new MapFunction<Person, Tuple2<String, String>>() {
-                    @Override
-                    public Tuple2<String, String> map(Person value) throws Exception {
-                        return new Tuple2<>(value.getName(), value.getJobTitle());
-                    }
-                });
-
-        DataStream<Tuple4<String, String, Double, String>> dataStreamMap2 = dataStream2
-                .map(new MapFunction<PersonInfo, Tuple4<String, String, Double, String>>() {
-                    @Override
-                    public Tuple4<String, String, Double, String> map(PersonInfo value) throws Exception {
-                        return new Tuple4<>(value.getName(), value.getAccountName(), value.getAmount(),
-                                value.getTransactionType());
-                    }
-                });
-
-        // dataStreamMap1.print();
-        // dataStreamMap2.print();
-
-        DataStream<Tuple4<String, String, Double, String>> joinedStream = dataStreamMap1
-                .join(dataStreamMap2)
-                .where(p -> p.f0)
-                .equalTo(pi -> pi.f0)
-                .window(TumblingEventTimeWindows.of(Duration.ofSeconds(5)))
-                .apply((new JoinFunction<Tuple2<String, String>, Tuple4<String, String, Double, String>, Tuple4<String, String, Double, String>>() {
-                    @Override
-                    public Tuple4<String, String, Double, String> join(
-                            Tuple2<String, String> first, Tuple4<String, String, Double, String> second) {
-                        return new Tuple4<String, String, Double, String>(first.f0, second.f1, second.f2, second.f3);
-                    }
-                }));
-
-        // joinedStream.print();
-
-        Table inputTable = tableEnv.fromDataStream(joinedStream);
-
-        tableEnv.createTemporaryView("InputTable", inputTable);
-        // Table resultTable = tableEnv.sqlQuery("SELECT UPPER(f0), f1 ,f2 ,f3 FROM InputTable");
-        Table resultTable = tableEnv.sqlQuery("SELECT f0, SUM(f2) FROM InputTable GROUP BY f0");
-
-        // interpret the insert-only Table as a DataStream again
-        DataStream<Row> resultStream = tableEnv.toChangelogStream(resultTable);
-
-        // add a printing sink and execute in DataStream API
-        resultStream.print();
-
-        // DataStream<Tuple3<Integer, Integer, Integer>> joinedStream = dataStreamMap1
-        // .join(dataStreamMap2)
-        // .where(new NameKeySelector())
-        // .equalTo(new NameKeySelector())
-        // .window(TumblingEventTimeWindows.of(Duration.ofSeconds(5)))
-        // // .window(SlidingEventTimeWindows.of(Duration.ofSeconds(10),
-        // Duration.ofSeconds(5)))
-        // // .window(EventTimeSessionWindows.withGap(Duration.ofMinutes(10)))
-        // .apply((new JoinFunction<Tuple2<Integer, String>, Tuple2<Integer, String>,
-        // Tuple3<Integer, Integer, Integer>>() {
+        // DataStream<Tuple2<String, String>> dataStreamMap1 = dataStream1
+        // .map(new MapFunction<Person, Tuple2<String, String>>() {
         // @Override
-        // public Tuple3<Integer, Integer, Integer> join(
-        // Tuple2<Integer, String> first, Tuple2<Integer, String> second) {
-        // System.out.println(first.f0 + " " + second.f0);
-        // System.out.println(first.f1 + " " + second.f1);
-        // return new Tuple3<Integer, Integer, Integer>(
-        // first.f0, second.f0, first.f0);
+        // public Tuple2<String, String> map(Person value) throws Exception {
+        // return new Tuple2<>(value.getName(), value.getJobTitle());
+        // }
+        // });
+
+        // DataStream<Tuple4<String, String, Double, String>> dataStreamMap2 =
+        // dataStream2
+        // .map(new MapFunction<PersonInfo, Tuple4<String, String, Double, String>>() {
+        // @Override
+        // public Tuple4<String, String, Double, String> map(PersonInfo value) throws
+        // Exception {
+        // return new Tuple4<>(value.getName(), value.getAccountName(),
+        // value.getAmount(),
+        // value.getTransactionType());
+        // }
+        // });
+
+        // // dataStreamMap1.print();
+        // // dataStreamMap2.print();
+
+        // DataStream<Tuple4<String, String, Double, String>> joinedStream =
+        // dataStreamMap1
+        // .join(dataStreamMap2)
+        // .where(p -> p.f0)
+        // .equalTo(pi -> pi.f0)
+        // .window(TumblingEventTimeWindows.of(Duration.ofSeconds(5)))
+        // .apply((new JoinFunction<Tuple2<String, String>, Tuple4<String, String,
+        // Double, String>, Tuple4<String, String, Double, String>>() {
+        // @Override
+        // public Tuple4<String, String, Double, String> join(
+        // Tuple2<String, String> first, Tuple4<String, String, Double, String> second)
+        // {
+        // return new Tuple4<String, String, Double, String>(first.f0, second.f1,
+        // second.f2, second.f3);
         // }
         // }));
+
         // joinedStream.print();
 
-        // DataStream<Tuple2<String, Post>> dataStream2 = env.fromSource(postSource,
-        // IngestionTimeWatermarkStrategy.create(),
-        // "Post Source")
-        // .map(new MapFunction<Post, Tuple2<Integer, String>>() {
-        // @Override
-        // public Tuple2<Integer, String> map(Post value) throws Exception {
-        // return new Tuple2<>(value.getBlogId(), value.getUrl());
-        // }
-        // });
+        // Table inputTable = tableEnv.fromDataStream(joinedStream);
 
-        // DataStream<Post> dataStream2 = env.fromSource(postSource,
-        // IngestionTimeWatermarkStrategy.create(),
-        // "Post Source")
-        // .setParallelism(1);
+        // tableEnv.createTemporaryView("InputTable", inputTable);
+        // // Table resultTable = tableEnv.sqlQuery("SELECT UPPER(f0), f1 ,f2 ,f3 FROM
+        // // InputTable");
+        // Table resultTable = tableEnv.sqlQuery("SELECT f0, SUM(f2) FROM InputTable
+        // GROUP BY f0");
 
-        // DataStream<BlogPost> joinedStream = dataStream1.join(dataStream2)
-        // .where(Blog::getBlogId).equalTo(Post::getBlogId)
-        // .window(TumblingEventTimeWindows.of(Duration.ofMillis(2000)))
-        // .apply(new JoinFunction<Blog, Post, BlogPost>() {
-        // @Override
-        // public BlogPost join(Blog b, Post p) throws Exception {
-        // return new BlogPost() {
-        // {
-        // setBlogId(b.getBlogId());
-        // setUrl(getUrl());
-        // setPostId(getPostId());
-        // setTitle(getTitle());
-        // setContent(getContent());
-        // }
-        // };
-        // }
-        // });
-        // joinedStream.print().setParallelism(1);
-        // dataStream1.print().setParallelism(1);
-        // dataStream2.print().setParallelism(1);
-        // dataStream1
-        // .join(dataStream2)
-        // .where(b -> b.getBlogId())
-        // .equalTo(p -> p.getBlogId())
-        // .window(TumblingEventTimeWindows.of(Duration.ofMinutes(5)))
-        // .apply((b, p) -> new BlogPost() {
-        // {
-        // setBlogId(b.getBlogId());
-        // setUrl(getUrl());
-        // setPostId(getPostId());
-        // setTitle(getTitle());
-        // setContent(getContent());
-        // }
-        // })
-        // .print()
-        // .setParallelism(1);
+        // DataStream<Row> resultStream = tableEnv.toChangelogStream(resultTable);
 
         return env;
     }
